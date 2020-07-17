@@ -595,12 +595,27 @@ func repoView(cmd *cobra.Command, args []string) error {
 		return errors.New("--web unsupported when not attached to a tty")
 	}
 
-	fullName := ghrepo.FullName(toView)
-
 	openURL := generateRepoURL(toView, "")
 	if web {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Opening %s in your browser.\n", displayURL(openURL))
 		return utils.OpenInBrowser(openURL)
+	}
+
+	fullName := ghrepo.FullName(toView)
+
+	if !connectedToTerminal(cmd) {
+		readme, err := api.RepositoryReadme(apiClient, fullName)
+		if err != nil {
+			return err
+		}
+
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "name:\t%s\n", fullName)
+		fmt.Fprintf(out, "description:\t%s\n", repo.Description)
+		fmt.Fprintln(out, "--")
+		fmt.Fprintf(out, readme.Content)
+
+		return nil
 	}
 
 	repoTmpl := `
@@ -617,7 +632,7 @@ func repoView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	readmeContent, _ := api.RepositoryReadme(apiClient, fullName)
+	readmeContent, _ := api.RenderedRepositoryReadme(apiClient, fullName)
 
 	if readmeContent == "" {
 		readmeContent = utils.Gray("No README provided")

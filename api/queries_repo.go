@@ -406,35 +406,46 @@ func RepoCreate(client *Client, input RepoCreateInput) (*Repository, error) {
 	return initRepoHostname(&response.CreateRepository.Repository, "github.com"), nil
 }
 
-func RepositoryReadme(client *Client, fullName string) (string, error) {
-	type readmeResponse struct {
-		Name    string
-		Content string
-	}
+type ReadmeResponse struct {
+	Name    string
+	Content string
+}
 
-	var readme readmeResponse
+func RepositoryReadme(client *Client, fullName string) (ReadmeResponse, error) {
+
+	var readme ReadmeResponse
 
 	err := client.REST("GET", fmt.Sprintf("repos/%s/readme", fullName), nil, &readme)
 	if err != nil && !strings.HasSuffix(err.Error(), "'Not Found'") {
-		return "", fmt.Errorf("could not get readme for repo: %w", err)
+		return readme, fmt.Errorf("could not get readme for repo: %w", err)
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(readme.Content)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode readme: %w", err)
+		return readme, fmt.Errorf("failed to decode readme: %w", err)
 	}
 
-	readmeContent := string(decoded)
+	readme.Content = string(decoded)
+
+	return readme, nil
+}
+
+func RenderedRepositoryReadme(client *Client, fullName string) (string, error) {
+	readme, err := RepositoryReadme(client, fullName)
+	if err != nil {
+		return "", err
+	}
+
+	readmeContent := readme.Content
 
 	if isMarkdownFile(readme.Name) {
-		readmeContent, err = utils.RenderMarkdown(readmeContent)
+		readmeContent, err = utils.RenderMarkdown(readme.Content)
 		if err != nil {
 			return "", fmt.Errorf("failed to render readme as markdown: %w", err)
 		}
 	}
 
 	return readmeContent, nil
-
 }
 
 type RepoMetadataResult struct {

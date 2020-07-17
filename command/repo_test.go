@@ -891,6 +891,8 @@ func TestRepoView(t *testing.T) {
 		{ "name": "readme.md",
 		"content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}`))
 
+	defer stubTerminal(true)()
+
 	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
@@ -901,7 +903,6 @@ func TestRepoView(t *testing.T) {
 		"social distancing",
 		"truly cool readme",
 		"View this repository on GitHub: https://github.com/OWNER/REPO")
-
 }
 
 func TestRepoView_nonmarkdown_readme(t *testing.T) {
@@ -921,6 +922,8 @@ func TestRepoView_nonmarkdown_readme(t *testing.T) {
 		{ "name": "readme.org",
 		"content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}`))
 
+	defer stubTerminal(true)()
+
 	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
@@ -939,6 +942,8 @@ func TestRepoView_blanks(t *testing.T) {
 	http.StubRepoResponse("OWNER", "REPO")
 	http.Register(httpmock.GraphQL(`query RepositoryInfo\b`), httpmock.StringResponse("{}"))
 
+	defer stubTerminal(true)()
+
 	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
@@ -949,4 +954,35 @@ func TestRepoView_blanks(t *testing.T) {
 		"No description provided",
 		"No README provided",
 		"View this repository on GitHub: https://github.com/OWNER/REPO")
+}
+
+func TestRepoView_nontty(t *testing.T) {
+	initBlankContext("", "OWNER/REPO", "master")
+	http := initFakeHTTP()
+	http.StubRepoResponse("OWNER", "REPO")
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
+		{ "data": {
+			"repository": {
+			"description": "social distancing"
+		} } }`))
+	http.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/readme"),
+		httpmock.StringResponse(`
+		{ "name": "readme.md",
+		"content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}`))
+
+	defer stubTerminal(false)()
+
+	output, err := RunCommand("repo view")
+	if err != nil {
+		t.Errorf("error running command `repo view`: %v", err)
+	}
+
+	test.ExpectLines(t, output.String(),
+		"OWNER/REPO",
+		"social distancing",
+		"# truly cool readme check it out",
+	)
 }
