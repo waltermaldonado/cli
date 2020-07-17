@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -588,6 +589,10 @@ func repoView(cmd *cobra.Command, args []string) error {
 	web, err := cmd.Flags().GetBool("web")
 	if err != nil {
 		return err
+	}
+
+	if web && !connectedToTerminal(cmd) {
+		return errors.New("--web unsupported when not attached to a tty")
 	}
 
 	fullName := ghrepo.FullName(toView)

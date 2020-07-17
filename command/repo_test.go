@@ -17,6 +17,7 @@ import (
 	"github.com/cli/cli/pkg/httpmock"
 	"github.com/cli/cli/test"
 	"github.com/cli/cli/utils"
+	"github.com/stretchr/testify/assert"
 )
 
 func stubSpinner() {
@@ -750,6 +751,27 @@ func TestRepoCreate_orgWithTeam(t *testing.T) {
 	}
 }
 
+func TestRepoView_web_nontty(t *testing.T) {
+	initBlankContext("", "OWNER/REPO", "master")
+	http := initFakeHTTP()
+	http.StubRepoResponse("OWNER", "REPO")
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
+		{ }`))
+
+	defer stubTerminal(false)()
+	output, err := RunCommand("repo view -w")
+
+	if err == nil {
+		t.Fatalf("expected an error")
+	}
+
+	assert.Equal(t, "--web unsupported when not attached to a tty", err.Error())
+	assert.Equal(t, "", output.String())
+
+}
+
 func TestRepoView_web(t *testing.T) {
 	initBlankContext("", "OWNER/REPO", "master")
 	http := initFakeHTTP()
@@ -765,6 +787,8 @@ func TestRepoView_web(t *testing.T) {
 		return &test.OutputStub{}
 	})
 	defer restoreCmd()
+
+	defer stubTerminal(true)()
 
 	output, err := RunCommand("repo view -w")
 	if err != nil {
@@ -799,6 +823,7 @@ func TestRepoView_web_ownerRepo(t *testing.T) {
 		return &test.OutputStub{}
 	})
 	defer restoreCmd()
+	defer stubTerminal(true)()
 
 	output, err := RunCommand("repo view -w cli/cli")
 	if err != nil {
@@ -833,6 +858,7 @@ func TestRepoView_web_fullURL(t *testing.T) {
 	})
 	defer restoreCmd()
 
+	defer stubTerminal(true)()
 	output, err := RunCommand("repo view -w https://github.com/cli/cli")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
