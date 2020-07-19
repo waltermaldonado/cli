@@ -9,47 +9,27 @@ import (
 
 	"github.com/cli/cli/api"
 	"github.com/cli/cli/auth"
+	"gopkg.in/yaml.v3"
 )
 
-var (
+
+
 	// The "GitHub CLI" OAuth app
 	oauthClientID = "178c6fc778ccc68e1d6a"
 	// This value is safe to be embedded in version control
 	oauthClientSecret = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b"
 )
 
-// IsGitHubApp reports whether an OAuth app is "GitHub CLI" or "GitHub CLI (dev)"
-func IsGitHubApp(id string) bool {
-	// this intentionally doesn't use `oauthClientID` because that is a variable
-	// that can potentially be changed at build time via GH_OAUTH_CLIENT_ID
-	return id == "178c6fc778ccc68e1d6a" || id == "4d747ba5675d5d66553f"
+
+func init() {
+	if gheHostname := os.Getenv("GITHUB_HOST"); gheHostname != "" {
+		oauthHost = gheHostname
+	}
 }
 
-func AuthFlowWithConfig(cfg Config, hostname, notice string) (string, error) {
-	token, userLogin, err := authFlow(hostname, notice)
-	if err != nil {
-		return "", err
-	}
-
-	err = cfg.Set(hostname, "user", userLogin)
-	if err != nil {
-		return "", err
-	}
-	err = cfg.Set(hostname, "oauth_token", token)
-	if err != nil {
-		return "", err
-	}
-
-	err = cfg.Write()
-	if err != nil {
-		return "", err
-	}
-
-	AuthFlowComplete()
-	return token, nil
-}
-
-func authFlow(oauthHost, notice string) (string, string, error) {
+// TODO: have a conversation about whether this belongs in the "context" package
+// FIXME: make testable
+func setupConfigFile(filename string) (Config, error) {
 	var verboseStream io.Writer
 	if strings.Contains(os.Getenv("DEBUG"), "oauth") {
 		verboseStream = os.Stderr

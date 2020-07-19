@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -144,8 +145,15 @@ func RepoParent(client *Client, repo ghrepo.Interface) (ghrepo.Interface, error)
 		"name":  githubv4.String(repo.RepoName()),
 	}
 
-	gql := graphQLClient(client.http)
-	err := gql.QueryNamed(context.Background(), "RepositoryFindParent", &query, variables)
+	var v4 *githubv4.Client
+	if gheHostname := os.Getenv("GITHUB_HOST"); gheHostname != "" {
+		v4 = githubv4.NewEnterpriseClient(fmt.Sprintf("https://%s/api/graphql", gheHostname), client.http)
+	} else {
+		v4 = githubv4.NewClient(client.http)
+	}
+
+	err := v4.Query(context.Background(), &query, variables)
+
 	if err != nil {
 		return nil, err
 	}

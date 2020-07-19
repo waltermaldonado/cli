@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"net/url"
 	"regexp"
 	"strings"
@@ -233,6 +234,10 @@ func (c Client) HasScopes(wantedScopes ...string) (bool, string, error) {
 // GraphQL performs a GraphQL request and parses the response
 func (c Client) GraphQL(query string, variables map[string]interface{}, data interface{}) error {
 	url := "https://api.github.com/graphql"
+	if gheHostname := os.Getenv("GITHUB_HOST"); gheHostname != "" {
+		url = fmt.Sprintf("https://%s/api/graphql", gheHostname)
+	}
+
 	reqBody, err := json.Marshal(map[string]interface{}{"query": query, "variables": variables})
 	if err != nil {
 		return err
@@ -261,6 +266,10 @@ func graphQLClient(h *http.Client) *graphql.Client {
 // REST performs a REST request and parses the response.
 func (c Client) REST(method string, p string, body io.Reader, data interface{}) error {
 	url := "https://api.github.com/" + p
+	if gheHostname := os.Getenv("GITHUB_HOST"); gheHostname != "" {
+		url = fmt.Sprintf("https://%s/api/v3/%s", gheHostname, p)
+	}
+
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return err
