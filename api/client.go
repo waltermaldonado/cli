@@ -8,23 +8,29 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/henvic/httpretty"
+	"github.com/shurcooL/graphql"
 )
 
 // ClientOption represents an argument to NewClient
 type ClientOption = func(http.RoundTripper) http.RoundTripper
 
-// NewClient initializes a Client
-func NewClient(opts ...ClientOption) *Client {
+// NewHTTPClient initializes an http.Client
+func NewHTTPClient(opts ...ClientOption) *http.Client {
 	tr := http.DefaultTransport
 	for _, opt := range opts {
 		tr = opt(tr)
 	}
-	http := &http.Client{Transport: tr}
-	client := &Client{http: http}
+	return &http.Client{Transport: tr}
+}
+
+// NewClient initializes a Client
+func NewClient(opts ...ClientOption) *Client {
+	client := &Client{http: NewHTTPClient(opts...)}
 	return client
 }
 
@@ -32,7 +38,25 @@ func NewClient(opts ...ClientOption) *Client {
 func AddHeader(name, value string) ClientOption {
 	return func(tr http.RoundTripper) http.RoundTripper {
 		return &funcTripper{roundTrip: func(req *http.Request) (*http.Response, error) {
-			req.Header.Add(name, value)
+			// prevent the token from leaking to non-GitHub hosts
+			// TODO: GHE support
+			if !strings.EqualFold(name, "Authorization") || strings.HasSuffix(req.URL.Hostname(), ".github.com") {
+				req.Header.Add(name, value)
+			}
+			return tr.RoundTrip(req)
+		}}
+	}
+}
+
+// AddHeaderFunc is an AddHeader that gets the string value from a function
+func AddHeaderFunc(name string, value func() string) ClientOption {
+	return func(tr http.RoundTripper) http.RoundTripper {
+		return &funcTripper{roundTrip: func(req *http.Request) (*http.Response, error) {
+			// prevent the token from leaking to non-GitHub hosts
+			// TODO: GHE support
+			if !strings.EqualFold(name, "Authorization") || strings.HasSuffix(req.URL.Hostname(), ".github.com") {
+				req.Header.Add(name, value())
+			}
 			return tr.RoundTrip(req)
 		}}
 	}
@@ -61,6 +85,58 @@ func VerboseLog(out io.Writer, logTraffic bool, colorize bool) ClientOption {
 func ReplaceTripper(tr http.RoundTripper) ClientOption {
 	return func(http.RoundTripper) http.RoundTripper {
 		return tr
+	}
+}
+
+var issuedScopesWarning bool
+
+const (
+	httpOAuthAppID  = "X-Oauth-Client-Id"
+	httpOAuthScopes = "X-Oauth-Scopes"
+)
+
+// CheckScopes checks whether an OAuth scope is present in a response
+func CheckScopes(wantedScope string, cb func(string) error) ClientOption {
+	wantedCandidates := []string{wantedScope}
+	if strings.HasPrefix(wantedScope, "read:") {
+		wantedCandidates = append(wantedCandidates, "admin:"+strings.TrimPrefix(wantedScope, "read:"))
+	}
+
+	return func(tr http.RoundTripper) http.RoundTripper {
+		return &funcTripper{roundTrip: func(req *http.Request) (*http.Response, error) {
+			res, err := tr.RoundTrip(req)
+			if err != nil || res.StatusCode > 299 || issuedScopesWarning {
+				return res, err
+			}
+
+			_, hasHeader := res.Header[httpOAuthAppID]
+			if !hasHeader {
+				return res, nil
+			}
+
+			appID := res.Header.Get(httpOAuthAppID)
+			hasScopes := strings.Split(res.Header.Get(httpOAuthScopes), ",")
+
+			hasWanted := false
+		outer:
+			for _, s := range hasScopes {
+				for _, w := range wantedCandidates {
+					if w == strings.TrimSpace(s) {
+						hasWanted = true
+						break outer
+					}
+				}
+			}
+
+			if !hasWanted {
+				if err := cb(appID); err != nil {
+					return res, err
+				}
+				issuedScopesWarning = true
+			}
+
+			return res, nil
+		}}
 	}
 }
 
@@ -99,7 +175,60 @@ func (gr GraphQLErrorResponse) Error() string {
 	for _, e := range gr.Errors {
 		errorMessages = append(errorMessages, e.Message)
 	}
-	return fmt.Sprintf("graphql error: '%s'", strings.Join(errorMessages, ", "))
+	return fmt.Sprintf("GraphQL error: %s", strings.Join(errorMessages, "\n"))
+}
+
+// HTTPError is an error returned by a failed API call
+type HTTPError struct {
+	StatusCode int
+	RequestURL *url.URL
+	Message    string
+}
+
+func (err HTTPError) Error() string {
+	if err.Message != "" {
+		return fmt.Sprintf("HTTP %d: %s (%s)", err.StatusCode, err.Message, err.RequestURL)
+	}
+	return fmt.Sprintf("HTTP %d (%s)", err.StatusCode, err.RequestURL)
+}
+
+// Returns whether or not scopes are present, appID, and error
+func (c Client) HasScopes(wantedScopes ...string) (bool, string, error) {
+	url := "https://api.github.com/user"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false, "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return false, "", handleHTTPError(res)
+	}
+
+	appID := res.Header.Get("X-Oauth-Client-Id")
+	hasScopes := strings.Split(res.Header.Get("X-Oauth-Scopes"), ",")
+
+	found := 0
+	for _, s := range hasScopes {
+		for _, w := range wantedScopes {
+			if w == strings.TrimSpace(s) {
+				found++
+			}
+		}
+	}
+
+	if found == len(wantedScopes) {
+		return true, appID, nil
+	}
+
+	return false, appID, nil
 }
 
 // GraphQL performs a GraphQL request and parses the response
@@ -128,6 +257,10 @@ func (c Client) GraphQL(query string, variables map[string]interface{}, data int
 	defer resp.Body.Close()
 
 	return handleResponse(resp, data)
+}
+
+func graphQLClient(h *http.Client) *graphql.Client {
+	return graphql.NewClient("https://api.github.com/graphql", h)
 }
 
 // REST performs a REST request and parses the response.
@@ -197,22 +330,25 @@ func handleResponse(resp *http.Response, data interface{}) error {
 }
 
 func handleHTTPError(resp *http.Response) error {
-	var message string
+	httpError := HTTPError{
+		StatusCode: resp.StatusCode,
+		RequestURL: resp.Request.URL,
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		httpError.Message = err.Error()
+		return httpError
+	}
+
 	var parsedBody struct {
 		Message string `json:"message"`
 	}
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	err = json.Unmarshal(body, &parsedBody)
-	if err != nil {
-		message = string(body)
-	} else {
-		message = parsedBody.Message
+	if err := json.Unmarshal(body, &parsedBody); err == nil {
+		httpError.Message = parsedBody.Message
 	}
 
-	return fmt.Errorf("http error, '%s' failed (%d): '%s'", resp.Request.URL, resp.StatusCode, message)
+	return httpError
 }
 
 var jsonTypeRE = regexp.MustCompile(`[/+]json($|;)`)

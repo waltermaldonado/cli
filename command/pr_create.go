@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/api"
 	"github.com/cli/cli/context"
 	"github.com/cli/cli/git"
 	"github.com/cli/cli/internal/ghrepo"
+	"github.com/cli/cli/pkg/cmdutil"
 	"github.com/cli/cli/pkg/githubtemplate"
 	"github.com/cli/cli/utils"
 	"github.com/spf13/cobra"
@@ -40,8 +42,8 @@ func computeDefaults(baseRef, headRef string) (defaults, error) {
 		out.Title = utils.Humanize(headRef)
 
 		body := ""
-		for _, c := range commits {
-			body += fmt.Sprintf("- %s\n", c.Title)
+		for i := len(commits) - 1; i >= 0; i-- {
+			body += fmt.Sprintf("- %s\n", commits[i].Title)
 		}
 		out.Body = body
 	}
@@ -124,6 +126,29 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("could not parse body: %w", err)
 	}
 
+	reviewers, err := cmd.Flags().GetStringSlice("reviewer")
+	if err != nil {
+		return fmt.Errorf("could not parse reviewers: %w", err)
+	}
+	assignees, err := cmd.Flags().GetStringSlice("assignee")
+	if err != nil {
+		return fmt.Errorf("could not parse assignees: %w", err)
+	}
+	labelNames, err := cmd.Flags().GetStringSlice("label")
+	if err != nil {
+		return fmt.Errorf("could not parse labels: %w", err)
+	}
+	projectNames, err := cmd.Flags().GetStringSlice("project")
+	if err != nil {
+		return fmt.Errorf("could not parse projects: %w", err)
+	}
+	var milestoneTitles []string
+	if milestoneTitle, err := cmd.Flags().GetString("milestone"); err != nil {
+		return fmt.Errorf("could not parse milestone: %w", err)
+	} else if milestoneTitle != "" {
+		milestoneTitles = append(milestoneTitles, milestoneTitle)
+	}
+
 	baseTrackingBranch := baseBranch
 	if baseRemote, err := remotes.FindByRepo(baseRepo.RepoOwner(), baseRepo.RepoName()); err == nil {
 		baseTrackingBranch = fmt.Sprintf("%s/%s", baseRemote.Name, baseBranch)
@@ -169,8 +194,18 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	isDraft, err := cmd.Flags().GetBool("draft")
+	if err != nil {
+		return fmt.Errorf("could not parse draft: %w", err)
+	}
+
 	if !isWeb && !autofill {
-		fmt.Fprintf(colorableErr(cmd), "\nCreating pull request for %s into %s in %s\n\n",
+		message := "\nCreating pull request for %s into %s in %s\n\n"
+		if isDraft {
+			message = "\nCreating draft pull request for %s into %s in %s\n\n"
+		}
+
+		fmt.Fprintf(colorableErr(cmd), message,
 			utils.Cyan(headBranch),
 			utils.Cyan(baseBranch),
 			ghrepo.FullName(baseRepo))
@@ -179,15 +214,26 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// TODO: only drop into interactive mode if stdin & stdout are a tty
-	if !isWeb && !autofill && (title == "" || body == "") {
-		var templateFiles []string
+	tb := issueMetadataState{
+		Type:       prMetadata,
+		Reviewers:  reviewers,
+		Assignees:  assignees,
+		Labels:     labelNames,
+		Projects:   projectNames,
+		Milestones: milestoneTitles,
+	}
+
+	interactive := !(cmd.Flags().Changed("title") && cmd.Flags().Changed("body"))
+
+	if !isWeb && !autofill && interactive {
+		var nonLegacyTemplateFiles []string
+		var legacyTemplateFile *string
 		if rootDir, err := git.ToplevelDir(); err == nil {
 			// TODO: figure out how to stub this in tests
-			templateFiles = githubtemplate.Find(rootDir, "PULL_REQUEST_TEMPLATE")
+			nonLegacyTemplateFiles = githubtemplate.FindNonLegacy(rootDir, "PULL_REQUEST_TEMPLATE")
+			legacyTemplateFile = githubtemplate.FindLegacy(rootDir, "PULL_REQUEST_TEMPLATE")
 		}
-
-		tb, err := titleBodySurvey(cmd, title, body, defs, templateFiles)
+		err := titleBodySurvey(cmd, &tb, client, baseRepo, title, body, defs, nonLegacyTemplateFiles, legacyTemplateFile, true, baseRepo.ViewerCanTriage())
 		if err != nil {
 			return fmt.Errorf("could not collect title and/or body: %w", err)
 		}
@@ -211,12 +257,11 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 		return errors.New("pull request title must not be blank")
 	}
 
-	isDraft, err := cmd.Flags().GetBool("draft")
-	if err != nil {
-		return fmt.Errorf("could not parse draft: %w", err)
-	}
 	if isDraft && isWeb {
 		return errors.New("the --draft flag is not supported with --web")
+	}
+	if len(reviewers) > 0 && isWeb {
+		return errors.New("the --reviewer flag is not supported with --web")
 	}
 
 	didForkRepo := false
@@ -250,7 +295,7 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 	// In either case, we want to add the head repo as a new git remote so we
 	// can push to it.
 	if headRemote == nil {
-		headRepoURL := formatRemoteURL(cmd, ghrepo.FullName(headRepo))
+		headRepoURL := formatRemoteURL(cmd, headRepo)
 
 		// TODO: prevent clashes with another remote of a same name
 		gitRemote, err := git.AddRemote("fork", headRepoURL)
@@ -259,8 +304,7 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 		}
 		headRemote = &context.Remote{
 			Remote: gitRemote,
-			Owner:  headRepo.RepoOwner(),
-			Repo:   headRepo.RepoName(),
+			Repo:   headRepo,
 		}
 	}
 
@@ -293,6 +337,11 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 			"headRefName": headBranchLabel,
 		}
 
+		err = addMetadataToIssueParams(client, baseRepo, params, &tb)
+		if err != nil {
+			return err
+		}
+
 		pr, err := api.CreatePullRequest(client, baseRepo, params)
 		if err != nil {
 			return fmt.Errorf("failed to create pull request: %w", err)
@@ -300,7 +349,14 @@ func prCreate(cmd *cobra.Command, _ []string) error {
 
 		fmt.Fprintln(cmd.OutOrStdout(), pr.URL)
 	} else if action == PreviewAction {
-		openURL := generateCompareURL(baseRepo, baseBranch, headBranchLabel, title, body)
+		milestone := ""
+		if len(milestoneTitles) > 0 {
+			milestone = milestoneTitles[0]
+		}
+		openURL, err := generateCompareURL(baseRepo, baseBranch, headBranchLabel, title, body, assignees, labelNames, projectNames, milestone)
+		if err != nil {
+			return err
+		}
 		// TODO could exceed max url length for explorer
 		fmt.Fprintf(cmd.ErrOrStderr(), "Opening %s in your browser.\n", displayURL(openURL))
 		return utils.OpenInBrowser(openURL)
@@ -352,26 +408,56 @@ func determineTrackingBranch(remotes context.Remotes, headBranch string) *git.Tr
 	return nil
 }
 
-func generateCompareURL(r ghrepo.Interface, base, head, title, body string) string {
-	u := fmt.Sprintf(
-		"https://github.com/%s/compare/%s...%s?expand=1",
-		ghrepo.FullName(r),
-		base,
-		head,
-	)
+func withPrAndIssueQueryParams(baseURL, title, body string, assignees, labels, projects []string, milestone string) (string, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
 	if title != "" {
-		u += "&title=" + url.QueryEscape(title)
+		q.Set("title", title)
 	}
 	if body != "" {
-		u += "&body=" + url.QueryEscape(body)
+		q.Set("body", body)
 	}
-	return u
+	if len(assignees) > 0 {
+		q.Set("assignees", strings.Join(assignees, ","))
+	}
+	if len(labels) > 0 {
+		q.Set("labels", strings.Join(labels, ","))
+	}
+	if len(projects) > 0 {
+		q.Set("projects", strings.Join(projects, ","))
+	}
+	if milestone != "" {
+		q.Set("milestone", milestone)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func generateCompareURL(r ghrepo.Interface, base, head, title, body string, assignees, labels, projects []string, milestone string) (string, error) {
+	u := generateRepoURL(r, "compare/%s...%s?expand=1", base, head)
+	url, err := withPrAndIssueQueryParams(u, title, body, assignees, labels, projects, milestone)
+	if err != nil {
+		return "", err
+	}
+	return url, nil
 }
 
 var prCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a pull request",
+	Args:  cmdutil.NoArgsQuoteReminder,
 	RunE:  prCreate,
+	Example: heredoc.Doc(`
+	$ gh pr create --title "The bug is fixed" --body "Everything works again"
+	$ gh issue create --label "bug,help wanted"
+	$ gh issue create --label bug --label "help wanted"
+	$ gh pr create --reviewer monalisa,hubot
+	$ gh pr create --project "Roadmap"
+	$ gh pr create --base develop
+	`),
 }
 
 func init() {
@@ -385,4 +471,10 @@ func init() {
 		"The branch into which you want your code merged")
 	prCreateCmd.Flags().BoolP("web", "w", false, "Open the web browser to create a pull request")
 	prCreateCmd.Flags().BoolP("fill", "f", false, "Do not prompt for title/body and just use commit info")
+
+	prCreateCmd.Flags().StringSliceP("reviewer", "r", nil, "Request reviews from people by their `login`")
+	prCreateCmd.Flags().StringSliceP("assignee", "a", nil, "Assign people by their `login`")
+	prCreateCmd.Flags().StringSliceP("label", "l", nil, "Add labels by `name`")
+	prCreateCmd.Flags().StringSliceP("project", "p", nil, "Add the pull request to projects by `name`")
+	prCreateCmd.Flags().StringP("milestone", "m", "", "Add the pull request to a milestone by `name`")
 }

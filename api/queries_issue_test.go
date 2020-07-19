@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/cli/cli/internal/ghrepo"
+	"github.com/cli/cli/pkg/httpmock"
 )
 
 func TestIssueList(t *testing.T) {
-	http := &FakeHTTP{}
+	http := &httpmock.Registry{}
 	client := NewClient(ReplaceTripper(http))
 
 	http.StubResponse(200, bytes.NewBufferString(`
@@ -38,7 +39,8 @@ func TestIssueList(t *testing.T) {
 	} } }
 	`))
 
-	_, err := IssueList(client, ghrepo.FromFullName("OWNER/REPO"), "open", []string{}, "", 251, "")
+	repo, _ := ghrepo.FromFullName("OWNER/REPO")
+	_, err := IssueList(client, repo, "open", []string{}, "", 251, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

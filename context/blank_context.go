@@ -17,14 +17,13 @@ func NewBlank() *blankContext {
 // A Context implementation that queries the filesystem
 type blankContext struct {
 	authToken string
-	authLogin string
 	branch    string
 	baseRepo  ghrepo.Interface
 	remotes   Remotes
 }
 
 func (c *blankContext) Config() (config.Config, error) {
-	cfg, err := config.ParseConfig("boom.txt")
+	cfg, err := config.ParseConfig("config.yml")
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse config during tests. did you remember to stub? error: %s", err))
 	}
@@ -39,17 +38,9 @@ func (c *blankContext) SetAuthToken(t string) {
 	c.authToken = t
 }
 
-func (c *blankContext) SetAuthLogin(login string) {
-	c.authLogin = login
-}
-
-func (c *blankContext) AuthLogin() (string, error) {
-	return c.authLogin, nil
-}
-
 func (c *blankContext) Branch() (string, error) {
 	if c.branch == "" {
-		return "", fmt.Errorf("branch was not initialized")
+		return "", fmt.Errorf("branch was not initialized: %w", git.ErrNotOnAnyBranch)
 	}
 	return c.branch, nil
 }
@@ -71,8 +62,7 @@ func (c *blankContext) SetRemotes(stubs map[string]string) {
 		ownerWithName := strings.SplitN(repo, "/", 2)
 		c.remotes = append(c.remotes, &Remote{
 			Remote: &git.Remote{Name: remoteName},
-			Owner:  ownerWithName[0],
-			Repo:   ownerWithName[1],
+			Repo:   ghrepo.New(ownerWithName[0], ownerWithName[1]),
 		})
 	}
 }
@@ -92,5 +82,6 @@ func (c *blankContext) BaseRepo() (ghrepo.Interface, error) {
 }
 
 func (c *blankContext) SetBaseRepo(nwo string) {
-	c.baseRepo = ghrepo.FromFullName(nwo)
+	repo, _ := ghrepo.FromFullName(nwo)
+	c.baseRepo = repo
 }

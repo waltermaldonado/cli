@@ -6,11 +6,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 
 	"github.com/cli/cli/command"
 	"github.com/cli/cli/internal/config"
+	"github.com/cli/cli/pkg/cmdutil"
 	"github.com/cli/cli/update"
 	"github.com/cli/cli/utils"
 	"github.com/mgutz/ansi"
@@ -29,8 +31,49 @@ func main() {
 
 	hasDebug := os.Getenv("DEBUG") != ""
 
+	stderr := utils.NewColorable(os.Stderr)
+
+	expandedArgs := []string{}
+	if len(os.Args) > 0 {
+		expandedArgs = os.Args[1:]
+	}
+
+	cmd, _, err := command.RootCmd.Traverse(expandedArgs)
+	if err != nil || cmd == command.RootCmd {
+		originalArgs := expandedArgs
+		isShell := false
+		expandedArgs, isShell, err = command.ExpandAlias(os.Args)
+		if err != nil {
+			fmt.Fprintf(stderr, "failed to process aliases:  %s\n", err)
+			os.Exit(2)
+		}
+
+		if isShell {
+			err = command.ExecuteShellAlias(expandedArgs)
+			if err != nil {
+				if ee, ok := err.(*exec.ExitError); ok {
+					os.Exit(ee.ExitCode())
+				}
+
+				fmt.Fprintf(stderr, "failed to run external command: %s", err)
+				os.Exit(3)
+			}
+
+			os.Exit(0)
+		}
+
+		if hasDebug {
+			fmt.Fprintf(stderr, "%v -> %v\n", originalArgs, expandedArgs)
+		}
+	}
+
+	command.RootCmd.SetArgs(expandedArgs)
+
 	if cmd, err := command.RootCmd.ExecuteC(); err != nil {
 		printError(os.Stderr, err, cmd, hasDebug)
+		os.Exit(1)
+	}
+	if command.HasFailed() {
 		os.Exit(1)
 	}
 
@@ -48,6 +91,10 @@ func main() {
 }
 
 func printError(out io.Writer, err error, cmd *cobra.Command, debug bool) {
+	if err == cmdutil.SilentError {
+		return
+	}
+
 	var dnsError *net.DNSError
 	if errors.As(err, &dnsError) {
 		fmt.Fprintf(out, "error connecting to %s\n", dnsError.Name)
@@ -60,7 +107,7 @@ func printError(out io.Writer, err error, cmd *cobra.Command, debug bool) {
 
 	fmt.Fprintln(out, err)
 
-	var flagError *command.FlagError
+	var flagError *cmdutil.FlagError
 	if errors.As(err, &flagError) || strings.HasPrefix(err.Error(), "unknown command ") {
 		if !strings.HasSuffix(err.Error(), "\n") {
 			fmt.Fprintln(out)

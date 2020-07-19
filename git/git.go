@@ -13,6 +13,9 @@ import (
 	"github.com/cli/cli/internal/run"
 )
 
+// ErrNotOnAnyBranch indicates that the users is in detached HEAD state
+var ErrNotOnAnyBranch = errors.New("git: not on any branch")
+
 // Ref represents a git commit reference
 type Ref struct {
 	Hash string
@@ -64,7 +67,7 @@ func CurrentBranch() (string, error) {
 	if errors.As(err, &cmdErr) {
 		if cmdErr.Stderr.Len() == 0 {
 			// Detached head
-			return "", errors.New("git: not on any branch")
+			return "", ErrNotOnAnyBranch
 		}
 	}
 
@@ -201,6 +204,24 @@ func ReadBranchConfig(branch string) (cfg BranchConfig) {
 		}
 	}
 	return
+}
+
+func DeleteLocalBranch(branch string) error {
+	branchCmd := GitCommand("branch", "-D", branch)
+	err := run.PrepareCmd(branchCmd).Run()
+	return err
+}
+
+func HasLocalBranch(branch string) bool {
+	configCmd := GitCommand("rev-parse", "--verify", "refs/heads/"+branch)
+	_, err := run.PrepareCmd(configCmd).Output()
+	return err == nil
+}
+
+func CheckoutBranch(branch string) error {
+	configCmd := GitCommand("checkout", branch)
+	err := run.PrepareCmd(configCmd).Run()
+	return err
 }
 
 func isFilesystemPath(p string) bool {

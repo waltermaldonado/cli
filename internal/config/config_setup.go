@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/cli/cli/api"
@@ -13,14 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var (
-	oauthHost = "github.com"
+
 
 	// The "GitHub CLI" OAuth app
 	oauthClientID = "178c6fc778ccc68e1d6a"
 	// This value is safe to be embedded in version control
 	oauthClientSecret = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b"
 )
+
 
 func init() {
 	if gheHostname := os.Getenv("GITHUB_HOST"); gheHostname != "" {
@@ -40,78 +39,37 @@ func setupConfigFile(filename string) (Config, error) {
 		Hostname:     oauthHost,
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
+		Scopes:       []string{"repo", "read:org", "gist"},
 		WriteSuccessHTML: func(w io.Writer) {
 			fmt.Fprintln(w, oauthSuccessPage)
 		},
 		VerboseStream: verboseStream,
 	}
 
-	fmt.Fprintln(os.Stderr, "Notice: authentication required")
+	fmt.Fprintln(os.Stderr, notice)
 	fmt.Fprintf(os.Stderr, "Press Enter to open %s in your browser... ", flow.Hostname)
 	_ = waitForEnter(os.Stdin)
 	token, err := flow.ObtainAccessToken()
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
 	userLogin, err := getViewer(token)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
-	// TODO this sucks. It precludes us laying out a nice config with comments and such.
-	type yamlConfig struct {
-		Hosts map[string]map[string]string
-	}
+	return token, userLogin, nil
+}
 
-	yamlHosts := map[string]map[string]string{}
-	yamlHosts[flow.Hostname] = map[string]string{}
-	yamlHosts[flow.Hostname]["user"] = userLogin
-	yamlHosts[flow.Hostname]["oauth_token"] = token
-
-	defaultConfig := yamlConfig{
-		Hosts: yamlHosts,
-	}
-
-	err = os.MkdirAll(filepath.Dir(filename), 0771)
-	if err != nil {
-		return nil, err
-	}
-
-	cfgFile, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return nil, err
-	}
-	defer cfgFile.Close()
-
-	yamlData, err := yaml.Marshal(defaultConfig)
-	if err != nil {
-		return nil, err
-	}
-	n, err := cfgFile.Write(yamlData)
-	if err == nil && n < len(yamlData) {
-		err = io.ErrShortWrite
-	}
-
-	if err == nil {
-		fmt.Fprintln(os.Stderr, "Authentication complete. Press Enter to continue... ")
-		_ = waitForEnter(os.Stdin)
-	}
-
-	// TODO cleaner error handling? this "should" always work given that we /just/ wrote the file...
-	return ParseConfig(filename)
+func AuthFlowComplete() {
+	fmt.Fprintln(os.Stderr, "Authentication complete. Press Enter to continue... ")
+	_ = waitForEnter(os.Stdin)
 }
 
 func getViewer(token string) (string, error) {
 	http := api.NewClient(api.AddHeader("Authorization", fmt.Sprintf("token %s", token)))
-
-	response := struct {
-		Viewer struct {
-			Login string
-		}
-	}{}
-	err := http.GraphQL("{ viewer { login } }", nil, &response)
-	return response.Viewer.Login, err
+	return api.CurrentLoginName(http)
 }
 
 func waitForEnter(r io.Reader) error {

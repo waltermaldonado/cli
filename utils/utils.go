@@ -26,6 +26,9 @@ func RenderMarkdown(text string) (string, error) {
 	if isColorEnabled() {
 		style = "dark"
 	}
+	// Glamour rendering preserves carriage return characters in code blocks, but
+	// we need to ensure that no such characters are present in the output.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	return glamour.Render(text, style)
 }
 
@@ -72,6 +75,16 @@ func Humanize(s string) string {
 	}
 
 	return strings.Map(h, s)
+}
+
+// We do this so we can stub out the spinner in tests -- it made things really flakey. this is not
+// an elegant solution.
+var StartSpinner = func(s *spinner.Spinner) {
+	s.Start()
+}
+
+var StopSpinner = func(s *spinner.Spinner) {
+	s.Stop()
 }
 
 func Spinner(w io.Writer) *spinner.Spinner {

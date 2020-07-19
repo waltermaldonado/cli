@@ -15,9 +15,9 @@ func Test_UncommittedChangeCount(t *testing.T) {
 		Output   string
 	}
 	cases := []c{
-		c{Label: "no changes", Expected: 0, Output: ""},
-		c{Label: "one change", Expected: 1, Output: " M poem.txt"},
-		c{Label: "untracked file", Expected: 2, Output: " M poem.txt\n?? new.txt"},
+		{Label: "no changes", Expected: 0, Output: ""},
+		{Label: "one change", Expected: 1, Output: " M poem.txt"},
+		{Label: "untracked file", Expected: 2, Output: " M poem.txt\n?? new.txt"},
 	}
 
 	teardown := run.SetPrepareCmd(func(*exec.Cmd) run.Runnable {
@@ -67,9 +67,8 @@ func Test_CurrentBranch_detached_head(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected an error")
 	}
-	expectedError := "git: not on any branch"
-	if err.Error() != expectedError {
-		t.Errorf("got unexpected error: %s instead of %s", err.Error(), expectedError)
+	if err != ErrNotOnAnyBranch {
+		t.Errorf("got unexpected error: %s instead of %s", err, ErrNotOnAnyBranch)
 	}
 	if len(cs.Calls) != 1 {
 		t.Errorf("expected 1 git call, saw %d", len(cs.Calls))

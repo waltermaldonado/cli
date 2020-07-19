@@ -1,37 +1,31 @@
 # Installation from source
 
-0. Verify that you have Go 1.13+ installed
-```
-$ go version
-go version go1.13.7
-```
+0. Verify that you have Go 1.13.8+ installed
 
-1. Clone cli into `~/.githubcli`
-```
-$ git clone https://github.com/cli/cli.git ~/.githubcli
-```
+   ```sh
+   $ go version
+   go version go1.14
+   ```
 
-2. Compile
-```
-$ cd ~/.githubcli && make
-```
+   If `go` is not installed, follow instructions on [the Go website](https://golang.org/doc/install).
 
-3. Add `~/.githubcli/bin` to your $PATH for access to the gh command-line utility.
+1. Clone this repository
 
-  * For **bash**:
-  ~~~ bash
-  $ echo 'export PATH="$HOME/.githubcli/bin:$PATH"' >> ~/.bash_profile
-  ~~~
-  
-  * For **Zsh**:
-  ~~~ zsh
-  $ echo 'export PATH="$HOME/.githubcli/bin:$PATH"' >> ~/.zshrc
-  ~~~
-  
-  * For **Fish shell**:
-  ~~~ fish
-  $ set -Ux fish_user_paths $HOME/.githubcli/bin $fish_user_paths
-  ~~~
+   ```sh
+   $ git clone https://github.com/cli/cli.git gh-cli
+   $ cd gh-cli
+   ```
 
-4. Restart your shell so that PATH changes take effect.
+2. Build the project
 
+   ```
+   $ make
+   ```
+
+3. Move the resulting `bin/gh` executable to somewhere in your PATH
+
+   ```sh
+   $ sudo mv ./bin/gh /usr/local/bin/
+   ```
+
+4. Run `gh version` to check if it worked.

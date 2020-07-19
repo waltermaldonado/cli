@@ -8,15 +8,26 @@ ifdef SOURCE_DATE_EPOCH
 else
     BUILD_DATE ?= $(shell date "$(DATE_FMT)")
 endif
-LDFLAGS := -X github.com/cli/cli/command.Version=$(GH_VERSION) $(LDFLAGS)
-LDFLAGS := -X github.com/cli/cli/command.BuildDate=$(BUILD_DATE) $(LDFLAGS)
+
+ifndef CGO_CPPFLAGS
+    export CGO_CPPFLAGS := $(CPPFLAGS)
+endif
+ifndef CGO_CFLAGS
+    export CGO_CFLAGS := $(CFLAGS)
+endif
+ifndef CGO_LDFLAGS
+    export CGO_LDFLAGS := $(LDFLAGS)
+endif
+
+GO_LDFLAGS := -X github.com/cli/cli/command.Version=$(GH_VERSION)
+GO_LDFLAGS += -X github.com/cli/cli/command.BuildDate=$(BUILD_DATE)
 ifdef GH_OAUTH_CLIENT_SECRET
-	LDFLAGS := -X github.com/cli/cli/context.oauthClientID=$(GH_OAUTH_CLIENT_ID) $(LDFLAGS)
-	LDFLAGS := -X github.com/cli/cli/context.oauthClientSecret=$(GH_OAUTH_CLIENT_SECRET) $(LDFLAGS)
+	GO_LDFLAGS += -X github.com/cli/cli/internal/config.oauthClientID=$(GH_OAUTH_CLIENT_ID)
+	GO_LDFLAGS += -X github.com/cli/cli/internal/config.oauthClientSecret=$(GH_OAUTH_CLIENT_SECRET)
 endif
 
 bin/gh: $(BUILD_FILES)
-	@go build -trimpath -ldflags "$(LDFLAGS)" -o "$@" ./cmd/gh
+	@go build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$@" ./cmd/gh
 
 test:
 	go test ./...
@@ -28,9 +39,24 @@ site:
 site-docs: site
 	git -C site pull
 	git -C site rm 'manual/gh*.md' 2>/dev/null || true
-	go run ./cmd/gen-docs site/manual
+	go run ./cmd/gen-docs --website --doc-path site/manual
 	for f in site/manual/gh*.md; do sed -i.bak -e '/^### SEE ALSO/,$$d' "$$f"; done
 	rm -f site/manual/*.bak
 	git -C site add 'manual/gh*.md'
-	git -C site commit -m 'update help docs'
+	git -C site commit -m 'update help docs' || true
 .PHONY: site-docs
+
+site-publish: site-docs
+ifndef GITHUB_REF
+	$(error GITHUB_REF is not set)
+endif
+	sed -i.bak -E 's/(assign version = )".+"/\1"$(GITHUB_REF:refs/tags/v%=%)"/' site/index.html
+	rm -f site/index.html.bak
+	git -C site commit -m '$(GITHUB_REF:refs/tags/v%=%)' index.html
+	git -C site push
+.PHONY: site-publish
+
+
+.PHONY: manpages
+manpages:
+	go run ./cmd/gen-docs --man-page --doc-path ./share/man/man1/

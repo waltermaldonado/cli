@@ -1,7 +1,6 @@
 package command
 
 import (
-	"bytes"
 	"encoding/json"
 	"io/ioutil"
 	"os/exec"
@@ -11,12 +10,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/briandowns/spinner"
+
 	"github.com/cli/cli/context"
 	"github.com/cli/cli/internal/run"
+	"github.com/cli/cli/pkg/httpmock"
 	"github.com/cli/cli/test"
+	"github.com/cli/cli/utils"
 )
 
+func stubSpinner() {
+	// not bothering with teardown since we never want spinners when doing tests
+	utils.StartSpinner = func(_ *spinner.Spinner) {
+	}
+	utils.StopSpinner = func(_ *spinner.Spinner) {
+	}
+}
+
 func TestRepoFork_already_forked(t *testing.T) {
+	stubSpinner()
 	initContext = func() context.Context {
 		ctx := context.NewBlank()
 		ctx.SetBaseRepo("OWNER/REPO")
@@ -30,7 +42,7 @@ func TestRepoFork_already_forked(t *testing.T) {
 	http.StubRepoResponse("OWNER", "REPO")
 	defer http.StubWithFixture(200, "forkResult.json")()
 
-	output, err := RunCommand(repoForkCmd, "repo fork --remote=false")
+	output, err := RunCommand("repo fork --remote=false")
 	if err != nil {
 		t.Errorf("got unexpected error: %v", err)
 	}
@@ -42,6 +54,7 @@ func TestRepoFork_already_forked(t *testing.T) {
 }
 
 func TestRepoFork_reuseRemote(t *testing.T) {
+	stubSpinner()
 	initContext = func() context.Context {
 		ctx := context.NewBlank()
 		ctx.SetBaseRepo("OWNER/REPO")
@@ -56,7 +69,7 @@ func TestRepoFork_reuseRemote(t *testing.T) {
 	http.StubRepoResponse("OWNER", "REPO")
 	defer http.StubWithFixture(200, "forkResult.json")()
 
-	output, err := RunCommand(repoForkCmd, "repo fork")
+	output, err := RunCommand("repo fork")
 	if err != nil {
 		t.Errorf("got unexpected error: %v", err)
 	}
@@ -77,13 +90,14 @@ func stubSince(d time.Duration) func() {
 }
 
 func TestRepoFork_in_parent(t *testing.T) {
+	stubSpinner()
 	initBlankContext("", "OWNER/REPO", "master")
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
 	http.StubRepoResponse("OWNER", "REPO")
 	defer http.StubWithFixture(200, "forkResult.json")()
 
-	output, err := RunCommand(repoForkCmd, "repo fork --remote=false")
+	output, err := RunCommand("repo fork --remote=false")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -98,6 +112,7 @@ func TestRepoFork_in_parent(t *testing.T) {
 }
 
 func TestRepoFork_outside(t *testing.T) {
+	stubSpinner()
 	tests := []struct {
 		name string
 		args string
@@ -117,7 +132,7 @@ func TestRepoFork_outside(t *testing.T) {
 			http := initFakeHTTP()
 			defer http.StubWithFixture(200, "forkResult.json")()
 
-			output, err := RunCommand(repoForkCmd, tt.args)
+			output, err := RunCommand(tt.args)
 			if err != nil {
 				t.Errorf("error running command `repo fork`: %v", err)
 			}
@@ -134,6 +149,7 @@ func TestRepoFork_outside(t *testing.T) {
 }
 
 func TestRepoFork_in_parent_yes(t *testing.T) {
+	stubSpinner()
 	initBlankContext("", "OWNER/REPO", "master")
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
@@ -146,7 +162,7 @@ func TestRepoFork_in_parent_yes(t *testing.T) {
 		return &test.OutputStub{}
 	})()
 
-	output, err := RunCommand(repoForkCmd, "repo fork --remote")
+	output, err := RunCommand("repo fork --remote")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -168,6 +184,7 @@ func TestRepoFork_in_parent_yes(t *testing.T) {
 }
 
 func TestRepoFork_outside_yes(t *testing.T) {
+	stubSpinner()
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
 	defer http.StubWithFixture(200, "forkResult.json")()
@@ -178,7 +195,7 @@ func TestRepoFork_outside_yes(t *testing.T) {
 	cs.Stub("") // git clone
 	cs.Stub("") // git remote add
 
-	output, err := RunCommand(repoForkCmd, "repo fork --clone OWNER/REPO")
+	output, err := RunCommand("repo fork --clone OWNER/REPO")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -194,6 +211,7 @@ func TestRepoFork_outside_yes(t *testing.T) {
 }
 
 func TestRepoFork_outside_survey_yes(t *testing.T) {
+	stubSpinner()
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
 	defer http.StubWithFixture(200, "forkResult.json")()
@@ -211,7 +229,7 @@ func TestRepoFork_outside_survey_yes(t *testing.T) {
 	}
 	defer func() { Confirm = oldConfirm }()
 
-	output, err := RunCommand(repoForkCmd, "repo fork OWNER/REPO")
+	output, err := RunCommand("repo fork OWNER/REPO")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -227,6 +245,7 @@ func TestRepoFork_outside_survey_yes(t *testing.T) {
 }
 
 func TestRepoFork_outside_survey_no(t *testing.T) {
+	stubSpinner()
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
 	defer http.StubWithFixture(200, "forkResult.json")()
@@ -244,7 +263,7 @@ func TestRepoFork_outside_survey_no(t *testing.T) {
 	}
 	defer func() { Confirm = oldConfirm }()
 
-	output, err := RunCommand(repoForkCmd, "repo fork OWNER/REPO")
+	output, err := RunCommand("repo fork OWNER/REPO")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -261,6 +280,7 @@ func TestRepoFork_outside_survey_no(t *testing.T) {
 }
 
 func TestRepoFork_in_parent_survey_yes(t *testing.T) {
+	stubSpinner()
 	initBlankContext("", "OWNER/REPO", "master")
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
@@ -280,7 +300,7 @@ func TestRepoFork_in_parent_survey_yes(t *testing.T) {
 	}
 	defer func() { Confirm = oldConfirm }()
 
-	output, err := RunCommand(repoForkCmd, "repo fork")
+	output, err := RunCommand("repo fork")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -303,6 +323,7 @@ func TestRepoFork_in_parent_survey_yes(t *testing.T) {
 }
 
 func TestRepoFork_in_parent_survey_no(t *testing.T) {
+	stubSpinner()
 	initBlankContext("", "OWNER/REPO", "master")
 	defer stubSince(2 * time.Second)()
 	http := initFakeHTTP()
@@ -322,7 +343,7 @@ func TestRepoFork_in_parent_survey_no(t *testing.T) {
 	}
 	defer func() { Confirm = oldConfirm }()
 
-	output, err := RunCommand(repoForkCmd, "repo fork")
+	output, err := RunCommand("repo fork")
 	if err != nil {
 		t.Errorf("error running command `repo fork`: %v", err)
 	}
@@ -437,18 +458,20 @@ func TestRepoClone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			http := initFakeHTTP()
-			http.StubResponse(200, bytes.NewBufferString(`
-			{ "data": { "repository": {
-				"parent": null
-			} } }
-			`))
+			http.Register(
+				httpmock.GraphQL(`query RepositoryFindParent\b`),
+				httpmock.StringResponse(`
+				{ "data": { "repository": {
+					"parent": null
+				} } }
+				`))
 
 			cs, restore := test.InitCmdStubber()
 			defer restore()
 
 			cs.Stub("") // git clone
 
-			output, err := RunCommand(repoCloneCmd, tt.args)
+			output, err := RunCommand(tt.args)
 			if err != nil {
 				t.Fatalf("error running command `repo clone`: %v", err)
 			}
@@ -463,14 +486,16 @@ func TestRepoClone(t *testing.T) {
 
 func TestRepoClone_hasParent(t *testing.T) {
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "data": { "repository": {
-		"parent": {
-			"owner": {"login": "hubot"},
-			"name": "ORIG"
-		}
-	} } }
-	`))
+	http.Register(
+		httpmock.GraphQL(`query RepositoryFindParent\b`),
+		httpmock.StringResponse(`
+		{ "data": { "repository": {
+			"parent": {
+				"owner": {"login": "hubot"},
+				"name": "ORIG"
+			}
+		} } }
+		`))
 
 	cs, restore := test.InitCmdStubber()
 	defer restore()
@@ -478,13 +503,44 @@ func TestRepoClone_hasParent(t *testing.T) {
 	cs.Stub("") // git clone
 	cs.Stub("") // git remote add
 
-	_, err := RunCommand(repoCloneCmd, "repo clone OWNER/REPO")
+	_, err := RunCommand("repo clone OWNER/REPO")
 	if err != nil {
 		t.Fatalf("error running command `repo clone`: %v", err)
 	}
 
 	eq(t, cs.Count, 2)
 	eq(t, strings.Join(cs.Calls[1].Args, " "), "git -C REPO remote add -f upstream https://github.com/hubot/ORIG.git")
+}
+
+func TestRepo_withoutUsername(t *testing.T) {
+	http := initFakeHTTP()
+	http.Register(
+		httpmock.GraphQL(`query UserCurrent\b`),
+		httpmock.StringResponse(`
+		{ "data": { "viewer": {
+			"login": "OWNER"
+		}}}`))
+	http.Register(
+		httpmock.GraphQL(`query RepositoryFindParent\b`),
+		httpmock.StringResponse(`
+		{ "data": { "repository": {
+			"parent": null
+		} } }`))
+
+	cs, restore := test.InitCmdStubber()
+	defer restore()
+
+	cs.Stub("") // git clone
+
+	output, err := RunCommand("repo clone REPO")
+	if err != nil {
+		t.Fatalf("error running command `repo clone`: %v", err)
+	}
+
+	eq(t, output.String(), "")
+	eq(t, output.Stderr(), "")
+	eq(t, cs.Count, 1)
+	eq(t, strings.Join(cs.Calls[0].Args, " "), "git clone https://github.com/OWNER/REPO.git")
 }
 
 func TestRepoCreate(t *testing.T) {
@@ -495,18 +551,19 @@ func TestRepoCreate(t *testing.T) {
 	}
 
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "data": { "createRepository": {
-		"repository": {
-			"id": "REPOID",
-			"url": "https://github.com/OWNER/REPO",
-			"name": "REPO",
-			"owner": {
-				"login": "OWNER"
+	http.Register(
+		httpmock.GraphQL(`mutation RepositoryCreate\b`),
+		httpmock.StringResponse(`
+		{ "data": { "createRepository": {
+			"repository": {
+				"id": "REPOID",
+				"url": "https://github.com/OWNER/REPO",
+				"name": "REPO",
+				"owner": {
+					"login": "OWNER"
+				}
 			}
-		}
-	} } }
-	`))
+		} } }`))
 
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
@@ -515,7 +572,7 @@ func TestRepoCreate(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoCreateCmd, "repo create REPO")
+	output, err := RunCommand("repo create REPO")
 	if err != nil {
 		t.Errorf("error running command `repo create`: %v", err)
 	}
@@ -560,22 +617,24 @@ func TestRepoCreate_org(t *testing.T) {
 	}
 
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "node_id": "ORGID"
-	}
-	`))
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "data": { "createRepository": {
-		"repository": {
-			"id": "REPOID",
-			"url": "https://github.com/ORG/REPO",
-			"name": "REPO",
-			"owner": {
-				"login": "ORG"
+	http.Register(
+		httpmock.REST("GET", "users/ORG"),
+		httpmock.StringResponse(`
+		{ "node_id": "ORGID"
+		}`))
+	http.Register(
+		httpmock.GraphQL(`mutation RepositoryCreate\b`),
+		httpmock.StringResponse(`
+		{ "data": { "createRepository": {
+			"repository": {
+				"id": "REPOID",
+				"url": "https://github.com/ORG/REPO",
+				"name": "REPO",
+				"owner": {
+					"login": "ORG"
+				}
 			}
-		}
-	} } }
-	`))
+		} } }`))
 
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
@@ -584,7 +643,7 @@ func TestRepoCreate_org(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoCreateCmd, "repo create ORG/REPO")
+	output, err := RunCommand("repo create ORG/REPO")
 	if err != nil {
 		t.Errorf("error running command `repo create`: %v", err)
 	}
@@ -628,23 +687,25 @@ func TestRepoCreate_orgWithTeam(t *testing.T) {
 	}
 
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "node_id": "TEAMID",
-	  "organization": { "node_id": "ORGID" }
-	}
-	`))
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ "data": { "createRepository": {
-		"repository": {
-			"id": "REPOID",
-			"url": "https://github.com/ORG/REPO",
-			"name": "REPO",
-			"owner": {
-				"login": "ORG"
+	http.Register(
+		httpmock.REST("GET", "orgs/ORG/teams/monkeys"),
+		httpmock.StringResponse(`
+		{ "node_id": "TEAMID",
+			"organization": { "node_id": "ORGID" }
+		}`))
+	http.Register(
+		httpmock.GraphQL(`mutation RepositoryCreate\b`),
+		httpmock.StringResponse(`
+		{ "data": { "createRepository": {
+			"repository": {
+				"id": "REPOID",
+				"url": "https://github.com/ORG/REPO",
+				"name": "REPO",
+				"owner": {
+					"login": "ORG"
+				}
 			}
-		}
-	} } }
-	`))
+		} } }`))
 
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
@@ -653,7 +714,7 @@ func TestRepoCreate_orgWithTeam(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoCreateCmd, "repo create ORG/REPO --team monkeys")
+	output, err := RunCommand("repo create ORG/REPO --team monkeys")
 	if err != nil {
 		t.Errorf("error running command `repo create`: %v", err)
 	}
@@ -693,9 +754,10 @@ func TestRepoView_web(t *testing.T) {
 	initBlankContext("", "OWNER/REPO", "master")
 	http := initFakeHTTP()
 	http.StubRepoResponse("OWNER", "REPO")
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ }
-	`))
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
+		{ }`))
 
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
@@ -704,7 +766,7 @@ func TestRepoView_web(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoViewCmd, "repo view -w")
+	output, err := RunCommand("repo view -w")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
@@ -726,9 +788,10 @@ func TestRepoView_web_ownerRepo(t *testing.T) {
 		return ctx
 	}
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ }
-	`))
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
+		{ }`))
 
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
@@ -737,7 +800,7 @@ func TestRepoView_web_ownerRepo(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoViewCmd, "repo view -w cli/cli")
+	output, err := RunCommand("repo view -w cli/cli")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
@@ -759,9 +822,10 @@ func TestRepoView_web_fullURL(t *testing.T) {
 		return ctx
 	}
 	http := initFakeHTTP()
-	http.StubResponse(200, bytes.NewBufferString(`
-	{ }
-	`))
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
+		{ }`))
 	var seenCmd *exec.Cmd
 	restoreCmd := run.SetPrepareCmd(func(cmd *exec.Cmd) run.Runnable {
 		seenCmd = cmd
@@ -769,7 +833,7 @@ func TestRepoView_web_fullURL(t *testing.T) {
 	})
 	defer restoreCmd()
 
-	output, err := RunCommand(repoViewCmd, "repo view -w https://github.com/cli/cli")
+	output, err := RunCommand("repo view -w https://github.com/cli/cli")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
@@ -788,18 +852,20 @@ func TestRepoView(t *testing.T) {
 	initBlankContext("", "OWNER/REPO", "master")
 	http := initFakeHTTP()
 	http.StubRepoResponse("OWNER", "REPO")
-	http.StubResponse(200, bytes.NewBufferString(`
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
 		{ "data": {
-				"repository": {
-		      "description": "social distancing"
-		}}}
-	`))
-	http.StubResponse(200, bytes.NewBufferString(`
+			"repository": {
+			"description": "social distancing"
+		} } }`))
+	http.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/readme"),
+		httpmock.StringResponse(`
 		{ "name": "readme.md",
-		  "content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}
-	`))
+		"content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}`))
 
-	output, err := RunCommand(repoViewCmd, "repo view")
+	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
@@ -816,18 +882,20 @@ func TestRepoView_nonmarkdown_readme(t *testing.T) {
 	initBlankContext("", "OWNER/REPO", "master")
 	http := initFakeHTTP()
 	http.StubRepoResponse("OWNER", "REPO")
-	http.StubResponse(200, bytes.NewBufferString(`
+	http.Register(
+		httpmock.GraphQL(`query RepositoryInfo\b`),
+		httpmock.StringResponse(`
 		{ "data": {
 				"repository": {
-		      "description": "social distancing"
-		}}}
-	`))
-	http.StubResponse(200, bytes.NewBufferString(`
+				"description": "social distancing"
+		} } }`))
+	http.Register(
+		httpmock.REST("GET", "repos/OWNER/REPO/readme"),
+		httpmock.StringResponse(`
 		{ "name": "readme.org",
-		  "content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}
-	`))
+		"content": "IyB0cnVseSBjb29sIHJlYWRtZSBjaGVjayBpdCBvdXQ="}`))
 
-	output, err := RunCommand(repoViewCmd, "repo view")
+	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
@@ -843,10 +911,9 @@ func TestRepoView_blanks(t *testing.T) {
 	initBlankContext("", "OWNER/REPO", "master")
 	http := initFakeHTTP()
 	http.StubRepoResponse("OWNER", "REPO")
-	http.StubResponse(200, bytes.NewBufferString("{}"))
-	http.StubResponse(200, bytes.NewBufferString("{}"))
+	http.Register(httpmock.GraphQL(`query RepositoryInfo\b`), httpmock.StringResponse("{}"))
 
-	output, err := RunCommand(repoViewCmd, "repo view")
+	output, err := RunCommand("repo view")
 	if err != nil {
 		t.Errorf("error running command `repo view`: %v", err)
 	}
